@@ -18,7 +18,7 @@ EbN0dB_max  = 10; % Maximum de EbN0
 EbN0dB_step = 1;% Pas de EbN0
 
 nbr_erreur  = 100;  % Nombre d'erreurs à observer avant de calculer un BER
-nbr_bit_max = 100e6;% Nombre de bits max à simuler 
+nbr_bit_max = 100e6;% Nombre de bits max à simuler
 ber_min     = 3e-5; % BER min
 
 EbN0dB = EbN0dB_min:EbN0dB_step:EbN0dB_max;     % Points de EbN0 en dB à simuler
@@ -110,7 +110,7 @@ for i_snr = 1:length(EbN0dB)
         
         %% Affichage du résultat
         if mod(n_frame,100) == 1
-            msg = sprintf(msg_format,...
+            display_str = sprintf(msg_format,...
                 EbN0dB(i_snr),         ... % EbN0 en dB
                 err_stat(3),           ... % Nombre de bits envoyés
                 err_stat(2),           ... % Nombre d'erreurs observées
@@ -119,15 +119,15 @@ for i_snr = 1:length(EbN0dB)
                 err_stat(3)/8/T_rx/1e3,... % Débit de décodage
                 toc(general_tic)*(nbr_erreur - min(err_stat(2),nbr_erreur))/nbr_erreur); % Temps restant
             fprintf(reverseStr);
-            msg_sz =  fprintf(msg);
+            msg_sz =  fprintf(display_str);
             reverseStr = repmat(sprintf('\b'), 1, msg_sz);
         end
         
     end
     
-    msg = sprintf(msg_format,EbN0dB(i_snr), err_stat(3), err_stat(2), err_stat(1), err_stat(3)/8/T_tx/1e3, err_stat(3)/8/T_rx/1e3, toc(general_tic)*(100 - min(err_stat(2),100))/100);
+    display_str = sprintf(msg_format,EbN0dB(i_snr), err_stat(3), err_stat(2), err_stat(1), err_stat(3)/8/T_tx/1e3, err_stat(3)/8/T_rx/1e3, toc(general_tic)*(100 - min(err_stat(2),100))/100);
     fprintf(reverseStr);
-    msg_sz =  fprintf(msg);
+    msg_sz =  fprintf(display_str);
     reverseStr = repmat(sprintf('\b'), 1, msg_sz);
     
     ber(i_snr) = err_stat(1);
