@@ -3,152 +3,135 @@ clc
 
 %% Parametres
 % -------------------------------------------------------------------------
-R = 1; % Rendement de la communication
+K = 1024; % Nombre de bits de message
+N = 1024; % Nombre de bits codés par trame (codée)
 
-pqt_par_trame = 10; % Nombre de paquets par trame
-bit_par_pqt   = 330;% Nombre de bit par paquet
-K = pqt_par_trame*bit_par_pqt; % Nombre de bits de message par trame
-N = K/R; % Nombre de bits codés par trame (codée)
+R = K/N; % Rendement de la communication
 
-M = 2; % Modulation BPSK <=> 2 symboles
-phi0 = 0; % Offset de phase our la BPSK
+M = 2;   % Modulation BPSK <=> 2 symboles
 
-EbN0dB_min  = -2; % Minimum de EbN0
+EbN0dB_min  = 0; % Minimum de EbN0
 EbN0dB_max  = 10; % Maximum de EbN0
 EbN0dB_step = 1;% Pas de EbN0
 
-nbr_erreur  = 100;  % Nombre d'erreurs à observer avant de calculer un BER
-nbr_bit_max = 100e6;% Nombre de bits max à simuler
-ber_min     = 3e-5; % BER min
+nbrErreur  = 100;  % Nombre d'erreurs à observer avant de calculer un BER
+nbrBitMax = 100e6;% Nombre de bits max à simuler
+TEBMin     = 1e-5; % BER min
 
-EbN0dB = EbN0dB_min:EbN0dB_step:EbN0dB_max;     % Points de EbN0 en dB à simuler
-EbN0   = 10.^(EbN0dB/10);% Points de EbN0 à simuler
-EsN0   = R*log2(M)*EbN0; % Points de EsN0
-EsN0dB = 10*log10(EsN0); % Points de EsN0 en dB à simuler
-
-% -------------------------------------------------------------------------
-
-%% Construction du modulateur
-mod_psk = comm.PSKModulator(...
-    'ModulationOrder', M, ... % BPSK
-    'PhaseOffset'    , phi0, ...
-    'SymbolMapping'  , 'Gray',...
-    'BitInput'       , true);
-
-%% Construction du demodulateur
-demod_psk = comm.PSKDemodulator(...
-    'ModulationOrder', M, ...
-    'PhaseOffset'    , phi0, ...
-    'SymbolMapping'  , 'Gray',...
-    'BitOutput'      , true,...
-    'DecisionMethod' , 'Log-likelihood ratio');
-
-%% Construction du canal AWGN
-awgn_channel = comm.AWGNChannel(...
-    'NoiseMethod', 'Signal to noise ratio (Es/No)',...
-    'EsNo',EsN0dB(1),...
-    'SignalPower',1);
-
-%% Construction de l'objet évaluant le TEB
-stat_erreur = comm.ErrorRate(); % Calcul du nombre d'erreur et du BER
+EbN0dB  = EbN0dB_min:EbN0dB_step:EbN0dB_max;     % Points de EbN0 en dB à simuler
+EbN0    = 10.^(EbN0dB/10);% Points de EbN0 à simuler
+EsN0    = R*log2(M)*EbN0; % Points de EsN0
+sigmaz2 = 1./(2 * EsN0);  % Variance de bruit pour chaque EbN0
 
 %% Initialisation des vecteurs de résultats
-ber = zeros(1,length(EbN0dB));
-Pe = qfunc(sqrt(2*EbN0));
+TEP = zeros(1,length(EbN0dB));
+TEB = zeros(1,length(EbN0dB));
+
+Pb_u = qfunc(sqrt(2*EbN0)); % Probabilité d'erreur non codée
+Pe_u = 1-(1-Pb_u).^K;
 
 %% Préparation de l'affichage
 figure(1)
-h_ber = semilogy(EbN0dB,ber,'XDataSource','EbN0dB', 'YDataSource','ber');
+semilogy(EbN0dB,Pb_u,'--', 'LineWidth',1.5,'DisplayName','Pb (BPSK théorique)');
 hold all
+semilogy(EbN0dB,Pe_u,'--', 'LineWidth',1.5,'DisplayName','Pe (BPSK théorique)');
+hTEB = semilogy(EbN0dB,TEB,'LineWidth',1.5,'XDataSource','EbN0dB', 'YDataSource','TEB', 'DisplayName','TEB Monte Carlo');
+hTEP = semilogy(EbN0dB,TEP,'LineWidth',1.5,'XDataSource','EbN0dB', 'YDataSource','TEP', 'DisplayName','TEP Monte Carlo');
 ylim([1e-6 1])
 grid on
 xlabel('$\frac{E_b}{N_0}$ en dB','Interpreter', 'latex', 'FontSize',14)
-ylabel('TEB','Interpreter', 'latex', 'FontSize',14)
+ylabel('TEB / TEP','Interpreter', 'latex', 'FontSize',14)
+legend()
 
 %% Préparation de l'affichage en console
-msg_format = '|   %7.2f  |   %9d   |  %9d | %2.2e |  %8.2f kO/s |   %8.2f kO/s |   %8.2f s |\n';
 
-fprintf(      '|------------|---------------|------------|----------|----------------|-----------------|--------------|\n')
-msg_header =  '|  Eb/N0 dB  |    Bit nbr    |  Bit err   |   TEB    |    Debit Tx    |     Debit Rx    | Tps restant  |\n';
+line       =  '|------------|---------------|------------|------------|----------|----------|------------------|-------------------|--------------|\n';
+msg_header =  '|  Eb/N0 dB  |    Bit nbr    |  Bit err   |  Pqt err   |   TEB    |   TEP    |     Debit Tx     |      Debit Rx     | Tps restant  |\n';
+msgFormat  =  '|   %7.2f  |   %9d   |  %9d |  %9d | %2.2e | %2.2e |  %10.2f MO/s |   %10.2f MO/s |   %8.2f s |\n';
+fprintf(line      );
 fprintf(msg_header);
-fprintf(      '|------------|---------------|------------|----------|----------------|-----------------|--------------|\n')
+fprintf(line      );
 
 
 %% Simulation
-for i_snr = 1:length(EbN0dB)
-    reverseStr = ''; % Pour affichage en console
-    awgn_channel.EsNo = EsN0dB(i_snr);% Mise a jour du EbN0 pour le canal
+for iSNR = 1:length(EbN0dB)
+    reverseStr = ''; % Pour affichage en console stat_erreur
     
-    stat_erreur.reset; % reset du compteur d'erreur
-    err_stat    = [0 0 0]; % vecteur résultat de stat_erreur
-    
-    demod_psk.Variance = awgn_channel.Variance;
-    
-    n_frame = 0;
+    pqtNbr  = 0; % Nombre de paquets envoyés
+    bitErr  = 0; % Nombre de bits faux
+    pqtErr  = 0; % Nombre de paquets faux
     T_rx = 0;
     T_tx = 0;
     general_tic = tic;
-    while (err_stat(2) < nbr_erreur && err_stat(3) < nbr_bit_max)
-        n_frame = n_frame + 1;
+    while (bitErr < nbrErreur && pqtNbr*K < nbrBitMax)
+        pqtNbr = pqtNbr + 1;
         
         %% Emetteur
-        tx_tic = tic;                 % Mesure du débit d'encodage
-        msg    = randi([0,1],K,1);    % Génération du message aléatoire
-        x      = step(mod_psk,  msg); % Modulation QPSK
-        T_tx   = T_tx+toc(tx_tic);    % Mesure du débit d'encodage
+        tx_tic  = tic;                 % Mesure du débit d'encodage
+        u       = randi([0,1],K,1);    % Génération du message aléatoire
+        c       = u;                   % Encodage
+        x       = 1-2*c;               % Modulation QPSK
+        T_tx    = T_tx+toc(tx_tic);    % Mesure du débit d'encodage
+        debitTX = pqtNbr*K/8/T_tx/1e6;
         
         %% Canal
-        y     = step(awgn_channel,x); % Ajout d'un bruit gaussien
+        z = sqrt(sigmaz2(iSNR)) * randn(size(x)); % Génération du bruit blanc gaussien
+        y = x + z;                          % Ajout du bruit blanc gaussien
         
         %% Recepteur
         rx_tic = tic;                  % Mesure du débit de décodage
-        Lc      = step(demod_psk,y);   % Démodulation (retourne des LLRs)
-        rec_msg = double(Lc(1:K) < 0); % Décision
+        Lc      = 2*y/sigmaz2(iSNR);   % Démodulation (retourne des LLRs)
+        u_rec   = double(Lc(1:K) < 0); % Message reçu
+        
+        BE      = sum(u(:) ~= u_rec(:)); % Nombre de bits faux sur cette trame
+        bitErr  = bitErr + BE;
+        pqtErr  = pqtErr + double(BE>0);
         T_rx    = T_rx + toc(rx_tic);  % Mesure du débit de décodage
-        
-        err_stat   = step(stat_erreur, msg, rec_msg); % Comptage des erreurs binaires
-        
+        debitRX = pqtNbr*K/8/T_rx/1e6;
         %% Affichage du résultat
-        if mod(n_frame,100) == 1
-            display_str = sprintf(msg_format,...
-                EbN0dB(i_snr),         ... % EbN0 en dB
-                err_stat(3),           ... % Nombre de bits envoyés
-                err_stat(2),           ... % Nombre d'erreurs observées
-                err_stat(1),           ... % BER
-                err_stat(3)/8/T_tx/1e3,... % Débit d'encodage
-                err_stat(3)/8/T_rx/1e3,... % Débit de décodage
-                toc(general_tic)*(nbr_erreur - min(err_stat(2),nbr_erreur))/nbr_erreur); % Temps restant
-            fprintf(reverseStr);
-            msg_sz =  fprintf(display_str);
-            reverseStr = repmat(sprintf('\b'), 1, msg_sz);
+        if mod(pqtNbr,100) == 1
+            pct1 = bitErr/nbrErreur;
+            pct2 = pqtNbr*K/nbrBitMax;
+            pct  = max(pct1, pct2);
+            
+            display_str = sprintf(msgFormat,...
+                EbN0dB(iSNR),               ... % EbN0 en dB
+                pqtNbr*K,                   ... % Nombre de bits envoyés
+                bitErr,                     ... % Nombre d'erreurs observées
+                pqtErr,                     ... % Nombre d'erreurs observées
+                bitErr/(pqtNbr*K),          ... % TEB
+                pqtErr/pqtNbr,              ... % TEP
+                debitTX,                    ... % Débit d'encodage
+                debitRX,                    ... % Débit de décodage
+                toc(general_tic)/pct*(1-pct)); % Temps restant
+            lr = length(reverseStr);
+            msg_sz =  fprintf([reverseStr, display_str]);
+            reverseStr = repmat(sprintf('\b'), 1, msg_sz-lr);
+            
+            TEB(iSNR) = bitErr/(pqtNbr*K);
+            TEP(iSNR) = pqtErr/pqtNbr;
+            refreshdata(hTEB);
+            refreshdata(hTEP);
         end
         
     end
     
-    display_str = sprintf(msg_format,EbN0dB(i_snr), err_stat(3), err_stat(2), err_stat(1), err_stat(3)/8/T_tx/1e3, err_stat(3)/8/T_rx/1e3, toc(general_tic)*(100 - min(err_stat(2),100))/100);
+    display_str = sprintf(msgFormat, EbN0dB(iSNR), pqtNbr*K, bitErr, pqtErr, bitErr/(pqtNbr*K), pqtErr/pqtNbr, debitTX, debitRX, 0);
     fprintf(reverseStr);
     msg_sz =  fprintf(display_str);
     reverseStr = repmat(sprintf('\b'), 1, msg_sz);
     
-    ber(i_snr) = err_stat(1);
-    refreshdata(h_ber);
+    TEB(iSNR) = bitErr/(pqtNbr*K);
+    TEP(iSNR) = pqtErr/pqtNbr;
+    refreshdata(hTEB);
+    refreshdata(hTEP);
     drawnow limitrate
     
-    if err_stat(1) < ber_min
+    if TEB(iSNR) < TEBMin
         break
     end
     
 end
-fprintf('|------------|---------------|------------|----------|----------------|-----------------|--------------|\n')
-
+fprintf(line      );
 %%
-figure(1)
-semilogy(EbN0dB,ber);
-hold all
-xlim([0 10])
-ylim([1e-6 1])
-grid on
-xlabel('$\frac{E_b}{N_0}$ en dB','Interpreter', 'latex', 'FontSize',14)
-ylabel('TEB','Interpreter', 'latex', 'FontSize',14)
-
-save('NC.mat','EbN0dB','ber')
+save('NC.mat','EbN0dB','TEB', 'TEP', 'R', 'K', 'N', 'Pb_u', 'Pe_u')
